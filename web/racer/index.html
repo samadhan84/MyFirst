@@ -69,7 +69,6 @@ const START_SPEED = 28, MAX_SPEED = 64, ACCEL = 0.6;
 const LANE_SPEED = [8, 11, 6];
 const CAR_LEN = 4, CAR_W = 1.9;
 const SPAWN_Z = -140, SEGMENT = 12;
-const TRAFFIC_COLORS = [0x3b82f6, 0x22c55e, 0xa855f7, 0xf97316, 0xeab308, 0xec4899, 0xe5e7eb];
 
 // ---------- scene ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -95,8 +94,6 @@ const M = {
   coin: new THREE.MeshLambertMaterial({ color: 0xfacc15, emissive: 0x6b4f00 }),
   shadow: new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3, depthWrite: false }),
 };
-const bodyMats = {};
-const bodyMat = c => bodyMats[c] || (bodyMats[c] = mat(c));
 
 const G = {
   box: new THREE.BoxGeometry(1, 1, 1),
@@ -145,27 +142,122 @@ for (let z = SPAWN_Z; z < SPAWN_Z + TREE_LOOP; z += TREE_STEP) {
   addScroller(makeTree(8 + Math.random() * 10, z + Math.random() * 4), TREE_LOOP);
 }
 
-function makeCar(color, isPlayer) {
+// ---------- racing cars ----------
+// Body and cockpit are side profiles (x = forward, y = up) extruded across the car's width.
+function extrudeProfile(points, width, bevel) {
+  const shape = new THREE.Shape();
+  shape.moveTo(points[0][0], points[0][1]);
+  for (const [x, y] of points.slice(1)) shape.lineTo(x, y);
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth: width - bevel * 2, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 3, curveSegments: 4,
+  });
+  geo.translate(0, 0, -(width - bevel * 2) / 2);
+  geo.rotateY(Math.PI / 2); // profile's forward (+x) becomes the car's forward (-z)
+  return geo;
+}
+const BODY_PROFILE = [
+  [-2.0, 0.22], [-2.02, 0.78], [-1.3, 0.84], [-0.9, 0.86], [0.6, 0.76], [1.3, 0.6], [1.85, 0.44],
+  [2.02, 0.32], [1.95, 0.18], [1.3, 0.14], [-1.3, 0.14],
+];
+const CANOPY_PROFILE = [[-1.05, 0.8], [-0.55, 1.2], [0.1, 1.24], [0.95, 0.74]];
+G.body = extrudeProfile(BODY_PROFILE, CAR_W - 0.1, 0.1);
+// The stripe's bevel is a hair bigger than the body's, so it sits just on top of the paint.
+G.stripe = extrudeProfile(BODY_PROFILE, 0.36, 0.115);
+G.canopy = extrudeProfile(CANOPY_PROFILE, CAR_W * 0.62, 0.12);
+G.tyre = new THREE.CylinderGeometry(1, 1, 1, 20).rotateZ(Math.PI / 2);
+G.number = new THREE.PlaneGeometry(1, 1);
+
+const phong = (c, shininess = 80) => new THREE.MeshPhongMaterial({ color: c, shininess, specular: 0x555555 });
+M.glassTint = new THREE.MeshPhongMaterial({ color: 0x0f172a, shininess: 140, specular: 0xffffff });
+M.rim = phong(0xd1d5db, 120);
+M.carbon = phong(0x1f2937, 40);
+M.tyreRubber = new THREE.MeshLambertMaterial({ color: 0x141414 });
+M.exhaust = phong(0x6b7280, 100);
+const paints = {};
+const paint = c => paints[c] || (paints[c] = phong(c));
+
+// Race number roundel, drawn once per number.
+const numberMats = {};
+function numberMat(n) {
+  if (numberMats[n]) return numberMats[n];
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = '#fff';
+  g.beginPath(); g.arc(64, 64, 60, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#111';
+  g.font = `bold ${String(n).length > 1 ? 64 : 80}px system-ui, sans-serif`;
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(n, 64, 70);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return (numberMats[n] = new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+}
+
+function makeWheel(r, w) {
+  const wheel = new THREE.Group();
+  wheel.add(mesh(G.tyre, M.tyreRubber, w, r, r, 0, 0, 0));
+  wheel.add(mesh(G.tyre, M.rim, w + 0.02, r * 0.62, r * 0.62, 0, 0, 0));
+  for (let i = 0; i < 3; i++) { // spokes, so you can see the wheel turning
+    const spoke = mesh(G.box, M.carbon, w + 0.04, r * 1.1, r * 0.14, 0, 0, 0);
+    spoke.rotation.x = (i * Math.PI) / 3;
+    wheel.add(spoke);
+  }
+  return wheel;
+}
+
+function makeCar(team) {
+  const [color, stripe, number] = team;
   const car = new THREE.Group();
-  const body = bodyMat(color);
-  car.add(mesh(G.plane, M.shadow, CAR_W + 0.5, 1, CAR_LEN + 0.5, 0, 0.02, 0));
-  car.add(mesh(G.box, body, CAR_W, 0.7, CAR_LEN, 0, 0.65, 0));
-  car.add(mesh(G.box, body, CAR_W * 0.82, 0.6, CAR_LEN * 0.48, 0, 1.25, 0.2));
-  car.add(mesh(G.box, M.glass, CAR_W * 0.84, 0.46, CAR_LEN * 0.36, 0, 1.25, 0.2)); // windows
-  for (const [x, z] of [[-0.95, -1.2], [0.95, -1.2], [-0.95, 1.2], [0.95, 1.2]]) car.add(mesh(G.wheel, M.tyre, 1, 1, 1, x, 0.42, z));
+  car.userData.wheels = [];
+  car.add(mesh(G.plane, M.shadow, CAR_W + 0.6, 1, CAR_LEN + 0.6, 0, 0.02, 0));
+  car.add(new THREE.Mesh(G.body, paint(color)));
+  car.add(new THREE.Mesh(G.stripe, paint(stripe)));
+  car.add(new THREE.Mesh(G.canopy, M.glassTint));
+
+  // wheels: slightly bigger at the back, like a real race car
+  for (const [x, z, r, w] of [[-0.98, -1.25, 0.38, 0.34], [0.98, -1.25, 0.38, 0.34], [-1.0, 1.3, 0.42, 0.4], [1.0, 1.3, 0.42, 0.4]]) {
+    const wheel = makeWheel(r, w);
+    wheel.position.set(x, r, z);
+    wheel.userData.r = r;
+    car.userData.wheels.push(wheel);
+    car.add(wheel);
+  }
+
+  // front splitter and rear wing
+  car.add(mesh(G.box, M.carbon, CAR_W + 0.1, 0.05, 0.35, 0, 0.14, -1.95));
+  car.add(mesh(G.box, paint(color), CAR_W + 0.2, 0.07, 0.5, 0, 1.28, 1.75));
+  for (const x of [-(CAR_W / 2 + 0.1), CAR_W / 2 + 0.1]) car.add(mesh(G.box, M.carbon, 0.05, 0.4, 0.62, x, 1.18, 1.75));
+  for (const x of [-0.45, 0.45]) car.add(mesh(G.box, M.carbon, 0.07, 0.45, 0.14, x, 1.02, 1.78));
+  const wingNumber = mesh(G.number, numberMat(number), 0.46, 0.46, 1, 0, 1.325, 1.75);
+  wingNumber.rotation.x = -Math.PI / 2;
+  car.add(wingNumber);
+  for (const side of [-1, 1]) {
+    const n = mesh(G.number, numberMat(number), 0.62, 0.62, 1, side * (CAR_W / 2 + 0.005), 0.5, 0.1);
+    n.rotation.y = side * Math.PI / 2;
+    car.add(n);
+  }
+
+  // lights and exhausts
   for (const x of [-0.6, 0.6]) {
-    car.add(mesh(G.box, M.head, 0.4, 0.18, 0.05, x, 0.72, -CAR_LEN / 2 - 0.01));
-    car.add(mesh(G.box, M.tail, 0.4, 0.18, 0.05, x, 0.72, CAR_LEN / 2 + 0.01));
+    car.add(mesh(G.box, M.head, 0.42, 0.09, 0.12, x, 0.4, -2.06));
+    car.add(mesh(G.box, M.tail, 0.5, 0.12, 0.05, x, 0.66, 2.13));
   }
-  if (isPlayer) {
-    car.add(mesh(G.box, M.white, 0.35, 0.02, CAR_LEN + 0.02, 0, 1.01, 0));
-    car.add(mesh(G.box, M.white, 0.35, 0.02, CAR_LEN * 0.48 + 0.02, 0, 1.56, 0.2));
-    car.add(mesh(G.box, M.tyre, CAR_W, 0.12, 0.5, 0, 1.2, 1.9)); // spoiler
-  }
+  for (const x of [-0.3, 0.3]) car.add(mesh(G.tyre, M.exhaust, 0.3, 0.07, 0.07, x, 0.3, 2.16).rotateY(Math.PI / 2));
   return car;
 }
 
-const playerCar = makeCar(0xef4444, true);
+function spinWheels(car, groundSpeed, dt) {
+  for (const w of car.userData.wheels) w.rotation.x -= (groundSpeed / w.userData.r) * dt;
+}
+
+// Rival teams: [body, stripe, number]
+const TEAMS = [
+  [0x2563eb, 0xf8fafc, 7], [0x16a34a, 0xfacc15, 12], [0x7c3aed, 0xf8fafc, 22], [0xf97316, 0x111827, 33],
+  [0xfacc15, 0x111827, 44], [0xdb2777, 0xf8fafc, 5], [0xe5e7eb, 0xdc2626, 63], [0x0891b2, 0xf97316, 18],
+];
+
+const playerCar = makeCar([0xdc2626, 0xf8fafc, 1]);
 scene.add(playerCar);
 
 // ---------- game state ----------
@@ -243,7 +335,7 @@ function update(dt) {
   carGap -= move;
   if (carGap <= 0) {
     const lane = freeLane();
-    const c = { lane, z: SPAWN_Z, mesh: makeCar(TRAFFIC_COLORS[Math.floor(Math.random() * TRAFFIC_COLORS.length)], false) };
+    const c = { lane, z: SPAWN_Z, mesh: makeCar(TEAMS[Math.floor(Math.random() * TEAMS.length)]) };
     c.mesh.position.set(LANES[lane], 0, c.z);
     scene.add(c.mesh);
     cars.push(c);
@@ -264,7 +356,8 @@ function update(dt) {
     coinGap = CAR_LEN * (3 + Math.random() * 4);
   }
 
-  for (const c of cars) { c.z += (speed - LANE_SPEED[c.lane]) * dt; c.mesh.position.z = c.z; }
+  for (const c of cars) { c.z += (speed - LANE_SPEED[c.lane]) * dt; c.mesh.position.z = c.z; spinWheels(c.mesh, LANE_SPEED[c.lane], dt); }
+  spinWheels(playerCar, speed, dt);
   for (const c of coins) { c.z += (speed - LANE_SPEED[c.lane]) * dt; c.mesh.position.z = c.z; c.mesh.rotation.y += dt * 4; }
   for (const o of scrollers) {
     const p = o.userData.period;
