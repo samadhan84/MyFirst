@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "DhruvilTic"
-include ':app'
+rootProject.name = "DhruvilGames"
+include ':app', ':racer'

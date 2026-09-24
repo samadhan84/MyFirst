@@ -3,21 +3,21 @@ plugins {
 }
 
 android {
-    namespace 'com.dhruvil.tic'
+    namespace 'com.dhruvil.racer'
     compileSdk 35
 
     defaultConfig {
-        applicationId 'com.dhruvil.tic'
+        applicationId 'com.dhruvil.racer'
         minSdk 26
         targetSdk 35
         versionCode 1
         versionName '1.0'
     }
 
-    // The game itself lives in /web/tic so the same files also work as a website.
+    // The game itself lives in /web/racer so the same files also work as a website.
     sourceSets {
         main {
-            assets.srcDirs = ['../web/tic']
+            assets.srcDirs = ['../web/racer']
         }
     }
 

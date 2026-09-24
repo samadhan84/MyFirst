@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#14532d">
+<title>Dhruvil Racer</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #2f7a33; touch-action: none; user-select: none; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #fff; }
+  canvas { display: block; }
+  .hud {
+    position: fixed; top: 0; left: 0; right: 0; display: flex; justify-content: space-between;
+    padding: max(10px, env(safe-area-inset-top)) 14px 0; pointer-events: none;
+    font-weight: 700; text-shadow: 0 2px 4px rgba(0,0,0,.6);
+  }
+  .hud div { background: rgba(0,0,0,.35); border-radius: 12px; padding: 6px 12px; min-width: 70px; text-align: center; }
+  .hud small { display: block; font-size: .7rem; font-weight: 500; opacity: .85; }
+  .hud span { font-size: 1.25rem; }
+  .overlay {
+    position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: rgba(10, 20, 30, .55); text-align: center; padding: 16px;
+  }
+  .overlay.hidden { display: none; }
+  .overlay h1 { margin: 0; font-size: 2.6rem; letter-spacing: 1px; }
+  .overlay h1 span { color: #facc15; }
+  .overlay p { margin: 10px 0; font-size: 1.1rem; opacity: .95; }
+  .overlay .big { font-size: 2rem; font-weight: 800; color: #facc15; }
+  .overlay button {
+    margin-top: 16px; border: none; border-radius: 999px; padding: 14px 40px;
+    font-size: 1.2rem; font-weight: 800; background: #facc15; color: #1f2937; cursor: pointer;
+  }
+  .overlay button:focus { outline: 4px solid #fff; }
+  .hint { font-size: .9rem !important; opacity: .8 !important; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div class="hud">
+  <div><small>SCORE</small><span id="score">0</span></div>
+  <div><small>SPEED</small><span id="speed">0</span></div>
+  <div><small>BEST</small><span id="best">0</span></div>
+</div>
+
+<div class="overlay" id="overlay">
+  <h1>Dhruvil <span>Racer</span></h1>
+  <div id="result"></div>
+  <p class="hint" id="hint">Tap the left or right side to change lanes.<br>Dodge the cars and grab the coins!</p>
+  <button id="play">PLAY</button>
+</div>
+
+<script>
+const cv = document.getElementById('game');
+const ctx = cv.getContext('2d');
+const overlay = document.getElementById('overlay');
+const playBtn = document.getElementById('play');
+const scoreEl = document.getElementById('score');
+const speedEl = document.getElementById('speed');
+const bestEl = document.getElementById('best');
+const resultEl = document.getElementById('result');
+
+const START_SPEED = 320, MAX_SPEED = 950, ACCEL = 9; // speeds are in "design pixels" per second
+// Each lane's traffic moves at one speed, so cars in a lane never drive through each other.
+const LANE_SPEED = [150, 190, 125];
+const TRAFFIC_COLORS = ['#3b82f6', '#22c55e', '#a855f7', '#f97316', '#eab308', '#ec4899', '#e5e7eb'];
+
+let W, H, k, road, laneW, carW, carH;
+let state = 'start', lastT = 0, scroll = 0, overAt = 0;
+let player, cars, coins, speed, dist, coinCount, carGap, coinGap, score;
+
+let best = 0;
+try { best = +localStorage.getItem('dhruvilRacerBest') || 0; } catch (e) {}
+bestEl.textContent = best;
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  k = H / 800; // scale speeds so the game feels the same on any screen
+  const rw = Math.min(W * 0.86, 440);
+  road = { x: (W - rw) / 2, w: rw };
+  laneW = rw / 3;
+  carW = laneW * 0.56;
+  carH = carW * 1.8;
+  if (player) { player.x = laneX(player.lane); player.y = H - carH - 40 * k - 20; }
+}
+const laneX = l => road.x + laneW * (l + 0.5);
+
+function reset() {
+  player = { lane: 1, x: laneX(1), y: H - carH - 40 * k - 20 };
+  cars = []; coins = [];
+  speed = START_SPEED; dist = 0; coinCount = 0; score = 0;
+  carGap = carH * 2; coinGap = carH * 4;
+}
+
+function start() {
+  if (state === 'play') return;
+  if (state === 'over' && performance.now() - overAt < 600) return; // avoid instant accidental restart
+  if (state !== 'pause') reset();
+  state = 'play';
+  overlay.classList.add('hidden');
+}
+
+function steer(dir) {
+  if (state !== 'play') return;
+  player.lane = Math.max(0, Math.min(2, player.lane + dir));
+}
+
+function buzz(ms) {
+  if (window.AndroidHaptics) AndroidHaptics.tap();
+  else if (navigator.vibrate) navigator.vibrate(ms);
+}
+
+// Pick a lane for a new car so the three lanes are never all blocked at once.
+function freeLane() {
+  const blocked = new Set(cars.filter(c => c.y < carH * 2.6).map(c => c.lane));
+  const options = [0, 1, 2].filter(l => blocked.size < 2 || blocked.has(l));
+  return options[Math.floor(Math.random() * options.length)];
+}
+
+function update(dt) {
+  speed = Math.min(MAX_SPEED, speed + ACCEL * dt);
+  const move = speed * k * dt;
+  dist += move / k;
+  scroll += move;
+  player.x += (laneX(player.lane) - player.x) * Math.min(1, dt * 14);
+
+  carGap -= move;
+  if (carGap <= 0) {
+    cars.push({
+      lane: freeLane(), y: -carH,
+      color: TRAFFIC_COLORS[Math.floor(Math.random() * TRAFFIC_COLORS.length)],
+    });
+    carGap = carH * (1.6 + Math.random() * 1.6);
+  }
+  coinGap -= move;
+  if (coinGap <= 0) {
+    const busy = new Set(cars.filter(c => c.y < carH * 1.5).map(c => c.lane));
+    const free = [0, 1, 2].filter(l => !busy.has(l));
+    if (free.length) coins.push({ lane: free[Math.floor(Math.random() * free.length)], y: -carW });
+    coinGap = carH * (2 + Math.random() * 3);
+  }
+
+  for (const c of cars) c.y += (speed - LANE_SPEED[c.lane]) * k * dt;
+  for (const c of coins) c.y += (speed - LANE_SPEED[c.lane]) * k * dt;
+  cars = cars.filter(c => c.y < H + carH);
+  coins = coins.filter(c => c.y < H + carW && !c.taken);
+
+  // Collisions (slightly smaller boxes feel fairer)
+  const px = player.x - carW / 2, mx = carW * 0.12, my = carH * 0.08;
+  for (const c of cars) {
+    const cx = laneX(c.lane) - carW / 2;
+    if (px + mx < cx + carW - mx && px + carW - mx > cx + mx &&
+        player.y + my < c.y + carH - my && player.y + carH - my > c.y + my) {
+      return crash();
+    }
+  }
+  for (const c of coins) {
+    if (c.lane === player.lane && Math.abs(laneX(c.lane) - player.x) < laneW / 2 &&
+        c.y + carW * 0.35 > player.y && c.y - carW * 0.35 < player.y + carH) {
+      c.taken = true; coinCount++; buzz(10);
+    }
+  }
+
+  score = Math.floor(dist / 40) + coinCount * 10;
+  scoreEl.textContent = score;
+  speedEl.textContent = Math.round(speed / 4);
+}
+
+function crash() {
+  state = 'over';
+  overAt = performance.now();
+  buzz(250);
+  const newBest = score > best;
+  if (newBest) {
+    best = score;
+    bestEl.textContent = best;
+    try { localStorage.setItem('dhruvilRacerBest', best); } catch (e) {}
+  }
+  resultEl.innerHTML = `<p>💥 Crash!</p><p class="big">${score}</p>` +
+    `<p>${newBest ? '🏆 New best score!' : 'Best: ' + best}</p>`;
+  document.getElementById('hint').style.display = 'none';
+  playBtn.textContent = 'PLAY AGAIN';
+  overlay.classList.remove('hidden');
+  playBtn.focus();
+}
+
+// ---------- drawing ----------
+function rr(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawCar(cx, y, color, isPlayer) {
+  const w = carW, h = carH, x = cx - w / 2;
+  ctx.fillStyle = 'rgba(0,0,0,.25)';
+  rr(x + 3, y + 5, w, h, w * 0.25);
+  ctx.fillStyle = '#111';
+  for (const wy of [0.14, 0.66]) {
+    rr(x - w * 0.08, y + h * wy, w * 0.18, h * 0.2, 3);
+    rr(x + w * 0.9, y + h * wy, w * 0.18, h * 0.2, 3);
+  }
+  ctx.fillStyle = color;
+  rr(x, y, w, h, w * 0.25);
+  if (isPlayer) {
+    ctx.fillStyle = 'rgba(255,255,255,.9)';
+    ctx.fillRect(cx - w * 0.07, y + 2, w * 0.14, h - 4);
+  }
+  ctx.fillStyle = 'rgba(15,25,45,.85)';
+  rr(x + w * 0.14, y + h * 0.24, w * 0.72, h * 0.17, 4);
+  rr(x + w * 0.18, y + h * 0.7, w * 0.64, h * 0.11, 4);
+  ctx.fillStyle = '#fef08a';
+  rr(x + w * 0.1, y + 2, w * 0.2, h * 0.05, 2);
+  rr(x + w * 0.7, y + 2, w * 0.2, h * 0.05, 2);
+  ctx.fillStyle = '#dc2626';
+  rr(x + w * 0.1, y + h * 0.94, w * 0.2, h * 0.05, 2);
+  rr(x + w * 0.7, y + h * 0.94, w * 0.2, h * 0.05, 2);
+}
+
+function draw() {
+  // grass with moving stripes
+  const band = 90 * k;
+  const off = scroll % (band * 2);
+  ctx.fillStyle = '#2f7a33';
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#35873a';
+  for (let y = -band * 2 + off; y < H; y += band * 2) ctx.fillRect(0, y, W, band);
+
+  // road
+  ctx.fillStyle = '#3b3b45';
+  ctx.fillRect(road.x, 0, road.w, H);
+
+  // red/white kerbs
+  const seg = 36 * k, kw = Math.max(6, road.w * 0.025);
+  const koff = scroll % (seg * 2);
+  for (let y = -seg * 2 + koff, i = 0; y < H; y += seg, i++) {
+    ctx.fillStyle = i % 2 ? '#f8fafc' : '#dc2626';
+    ctx.fillRect(road.x - kw, y, kw, seg);
+    ctx.fillRect(road.x + road.w, y, kw, seg);
+  }
+
+  // lane dashes
+  const dash = 44 * k, doff = scroll % (dash * 2);
+  ctx.fillStyle = 'rgba(255,255,255,.8)';
+  for (let i = 1; i < 3; i++) {
+    const lx = road.x + laneW * i - 3;
+    for (let y = -dash * 2 + doff; y < H; y += dash * 2) ctx.fillRect(lx, y, 6, dash);
+  }
+
+  if (!player) return;
+
+  for (const c of coins) {
+    const cx = laneX(c.lane), r = carW * 0.3;
+    ctx.fillStyle = '#ca8a04';
+    ctx.beginPath(); ctx.arc(cx, c.y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#facc15';
+    ctx.beginPath(); ctx.arc(cx, c.y, r * 0.75, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ca8a04';
+    ctx.font = `bold ${Math.round(r)}px system-ui, sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('D', cx, c.y + 1);
+  }
+  for (const c of cars) drawCar(laneX(c.lane), c.y, c.color, false);
+  drawCar(player.x, player.y, '#ef4444', true);
+}
+
+function frame(t) {
+  const dt = Math.min((t - lastT) / 1000, 0.05);
+  lastT = t;
+  if (state === 'play') update(dt);
+  else if (state === 'start') scroll += 150 * k * dt; // gentle movement behind the title screen
+  draw();
+  requestAnimationFrame(frame);
+}
+
+// ---------- controls ----------
+cv.addEventListener('pointerdown', e => steer(e.clientX < W / 2 ? -1 : 1));
+playBtn.addEventListener('click', e => { e.stopPropagation(); start(); });
+overlay.addEventListener('pointerdown', () => start());
+addEventListener('keydown', e => {
+  if (e.key === 'ArrowLeft' || e.key === 'a') { steer(-1); e.preventDefault(); }
+  else if (e.key === 'ArrowRight' || e.key === 'd') { steer(1); e.preventDefault(); }
+  else if ((e.key === 'Enter' || e.key === ' ') && state !== 'play') { start(); e.preventDefault(); }
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && state === 'play') {
+    state = 'pause';
+    resultEl.innerHTML = '<p class="big">Paused</p>';
+    document.getElementById('hint').style.display = 'none';
+    playBtn.textContent = 'CONTINUE';
+    overlay.classList.remove('hidden');
+  }
+});
+addEventListener('resize', resize);
+
+resize();
+reset();
+playBtn.focus();
+requestAnimationFrame(t => { lastT = t; requestAnimationFrame(frame); });
+</script>
+</body>
+</html>
