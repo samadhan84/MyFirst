@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- grid -->
+    <path
+        android:pathData="M46,28 L46,80 M62,28 L62,80 M28,46 L80,46 M28,62 L80,62"
+        android:strokeColor="#59FFFFFF"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round" />
+    <!-- X marks -->
+    <path
+        android:pathData="M31,31 L41,41 M41,31 L31,41 M67,67 L77,77 M77,67 L67,77"
+        android:strokeColor="#38BDF8"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round" />
+    <!-- O marks -->
+    <path
+        android:pathData="M54,48.5 a5.5,5.5 0 1,1 0,11 a5.5,5.5 0 1,1 0,-11 M72,30.5 a5,5 0 1,1 0,10 a5,5 0 1,1 0,-10"
+        android:strokeColor="#F472B6"
+        android:strokeWidth="3.5" />
+</vector>

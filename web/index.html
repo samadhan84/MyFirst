@@ -146,7 +146,7 @@ function play(i, byHuman) {
   if (byHuman && mode === 'cpu' && turn === 'O') return;
   board[i] = turn;
   cells[i].classList.remove('pop'); void cells[i].offsetWidth; cells[i].classList.add('pop');
-  if (navigator.vibrate) navigator.vibrate(15);
+  if (window.AndroidHaptics) AndroidHaptics.tap(); else if (navigator.vibrate) navigator.vibrate(15);
 
   const w = winner(board);
   if (w) {
