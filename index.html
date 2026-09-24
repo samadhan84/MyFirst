@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#1e1b4b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Dhruvil Tic">
+<title>Dhruvil Tic</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<style>
+  :root {
+    --bg1: #1e1b4b; --bg2: #4c1d95;
+    --card: rgba(255,255,255,0.08); --line: rgba(255,255,255,0.18);
+    --x: #38bdf8; --o: #f472b6; --text: #f8fafc; --muted: #c4b5fd;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(160deg, var(--bg1), var(--bg2));
+    color: var(--text);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+    user-select: none;
+  }
+  h1 { margin: 0 0 4px; font-size: 2.2rem; letter-spacing: 1px; }
+  h1 span { color: var(--x); } h1 b { color: var(--o); }
+  .modes { display: flex; gap: 8px; margin: 12px 0; }
+  .modes button, .reset {
+    border: 1px solid var(--line); background: var(--card); color: var(--text);
+    padding: 10px 14px; border-radius: 999px; font-size: 0.95rem; cursor: pointer;
+  }
+  .modes button.active { background: var(--text); color: var(--bg1); font-weight: 700; }
+  .scores { display: flex; gap: 10px; margin-bottom: 12px; width: min(92vw, 380px); }
+  .score { flex: 1; text-align: center; background: var(--card); border-radius: 14px; padding: 8px 4px; border: 2px solid transparent; transition: border-color .2s; }
+  .score.turn { border-color: var(--text); }
+  .score small { display: block; color: var(--muted); font-size: 0.75rem; }
+  .score strong { font-size: 1.4rem; }
+  .sx strong { color: var(--x); } .so strong { color: var(--o); }
+  .status { min-height: 1.6em; font-size: 1.15rem; margin-bottom: 12px; text-align: center; }
+  .board {
+    display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); gap: 10px; flex-shrink: 0;
+    width: min(92vw, 380px, 55vh); aspect-ratio: 1;
+  }
+  .cell {
+    background: var(--card); border: none; border-radius: 18px;
+    font-size: clamp(2.5rem, min(18vw, 10vh), 5rem); font-weight: 800; color: var(--text);
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+    transition: transform .1s, background .2s;
+  }
+  .cell:active { transform: scale(0.95); }
+  .cell.x { color: var(--x); } .cell.o { color: var(--o); }
+  .cell.pop { animation: pop .25s ease-out; }
+  .cell.win { background: rgba(250, 204, 21, 0.35); }
+  @keyframes pop { from { transform: scale(0.3); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  .reset { margin-top: 18px; padding: 12px 28px; font-size: 1rem; font-weight: 600; }
+</style>
+</head>
+<body>
+  <h1><span>Dhruvil</span> <b>Tic</b></h1>
+
+  <div class="modes">
+    <button data-mode="cpu" class="active">vs Computer</button>
+    <button data-mode="pvp">2 Players</button>
+  </div>
+
+  <div class="scores">
+    <div class="score sx" id="scoreX"><small id="labelX">You (X)</small><strong id="winsX">0</strong></div>
+    <div class="score"><small>Draws</small><strong id="draws">0</strong></div>
+    <div class="score so" id="scoreO"><small id="labelO">Computer (O)</small><strong id="winsO">0</strong></div>
+  </div>
+
+  <div class="status" id="status"></div>
+  <div class="board" id="board"></div>
+  <button class="reset" id="reset">New Game</button>
+
+<script>
+const LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+const boardEl = document.getElementById('board');
+const statusEl = document.getElementById('status');
+let board, turn, over, mode = 'cpu', starter = 'X';
+const score = { X: 0, O: 0, D: 0 };
+
+const cells = Array.from({ length: 9 }, (_, i) => {
+  const b = document.createElement('button');
+  b.className = 'cell';
+  b.setAttribute('aria-label', 'Cell ' + (i + 1));
+  b.addEventListener('click', () => play(i, true));
+  boardEl.appendChild(b);
+  return b;
+});
+
+function winner(b) {
+  for (const l of LINES) {
+    const [a, c, d] = l;
+    if (b[a] && b[a] === b[c] && b[a] === b[d]) return { p: b[a], line: l };
+  }
+  return b.every(Boolean) ? { p: 'D' } : null;
+}
+
+// Minimax: unbeatable, but it occasionally makes a random move so kids can win.
+function bestMove(b) {
+  const empty = b.map((v, i) => v ? null : i).filter(v => v !== null);
+  if (Math.random() < 0.2) return empty[Math.floor(Math.random() * empty.length)];
+  let best = -Infinity, move = empty[0];
+  for (const i of empty) {
+    b[i] = 'O';
+    const s = minimax(b, false, 0);
+    b[i] = null;
+    if (s > best) { best = s; move = i; }
+  }
+  return move;
+}
+function minimax(b, maxing, depth) {
+  const w = winner(b);
+  if (w) return w.p === 'O' ? 10 - depth : w.p === 'X' ? depth - 10 : 0;
+  let best = maxing ? -Infinity : Infinity;
+  for (let i = 0; i < 9; i++) {
+    if (b[i]) continue;
+    b[i] = maxing ? 'O' : 'X';
+    const s = minimax(b, !maxing, depth + 1);
+    b[i] = null;
+    best = maxing ? Math.max(best, s) : Math.min(best, s);
+  }
+  return best;
+}
+
+function render() {
+  cells.forEach((c, i) => {
+    c.textContent = board[i] || '';
+    c.classList.toggle('x', board[i] === 'X');
+    c.classList.toggle('o', board[i] === 'O');
+  });
+  document.getElementById('winsX').textContent = score.X;
+  document.getElementById('winsO').textContent = score.O;
+  document.getElementById('draws').textContent = score.D;
+  document.getElementById('scoreX').classList.toggle('turn', !over && turn === 'X');
+  document.getElementById('scoreO').classList.toggle('turn', !over && turn === 'O');
+}
+
+function play(i, byHuman) {
+  if (over || board[i]) return;
+  if (byHuman && mode === 'cpu' && turn === 'O') return;
+  board[i] = turn;
+  cells[i].classList.remove('pop'); void cells[i].offsetWidth; cells[i].classList.add('pop');
+  if (navigator.vibrate) navigator.vibrate(15);
+
+  const w = winner(board);
+  if (w) {
+    over = true;
+    score[w.p]++;
+    if (w.line) w.line.forEach(k => cells[k].classList.add('win'));
+    statusEl.textContent = w.p === 'D' ? "It's a draw 🤝"
+      : mode === 'cpu' ? (w.p === 'X' ? 'You win! 🎉' : 'Computer wins 🤖')
+      : `Player ${w.p} wins! 🎉`;
+    render();
+    return;
+  }
+  turn = turn === 'X' ? 'O' : 'X';
+  updateStatus();
+  render();
+  if (mode === 'cpu' && turn === 'O') setTimeout(() => play(bestMove(board), false), 450);
+}
+
+function updateStatus() {
+  statusEl.textContent = mode === 'cpu'
+    ? (turn === 'X' ? 'Your turn' : 'Computer is thinking…')
+    : `Player ${turn}'s turn`;
+}
+
+function newGame() {
+  board = Array(9).fill(null);
+  over = false;
+  turn = starter;
+  starter = starter === 'X' ? 'O' : 'X'; // alternate who starts
+  cells.forEach(c => c.classList.remove('win', 'pop'));
+  updateStatus();
+  render();
+  if (mode === 'cpu' && turn === 'O') setTimeout(() => play(bestMove(board), false), 450);
+}
+
+document.getElementById('reset').addEventListener('click', newGame);
+document.querySelectorAll('.modes button').forEach(btn => btn.addEventListener('click', () => {
+  document.querySelectorAll('.modes button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  mode = btn.dataset.mode;
+  score.X = score.O = score.D = 0;
+  starter = 'X';
+  document.getElementById('labelX').textContent = mode === 'cpu' ? 'You (X)' : 'Player X';
+  document.getElementById('labelO').textContent = mode === 'cpu' ? 'Computer (O)' : 'Player O';
+  newGame();
+}));
+
+newGame();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+</script>
+</body>
+</html>

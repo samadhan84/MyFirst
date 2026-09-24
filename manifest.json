@@ -1,0 +1,14 @@
+{
+  "name": "Dhruvil Tic",
+  "short_name": "Dhruvil Tic",
+  "description": "A small tic-tac-toe game for your phone.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1e1b4b",
+  "theme_color": "#1e1b4b",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
