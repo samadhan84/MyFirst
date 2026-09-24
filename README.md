@@ -11,7 +11,8 @@ Tic-tac-toe.
 
 ## Dhruvil Racer
 
-A top-down car racing game.
+A 3D car racing game, drawn with [three.js](https://threejs.org) (MIT, bundled in `web/racer/three.min.js`
+so the game works offline).
 - Tap the left or right side of the screen (or use the arrow keys) to change lanes
 - Dodge the traffic, grab the **D** coins (+10 each), and go as far as you can
 - The race gets faster over time, and the game remembers your best score
