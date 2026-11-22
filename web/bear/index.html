@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Bruno's Big Adventure</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #8ed1fc; user-select: none; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #fff; }
+  canvas { display: block; }
+  .hud { position: fixed; top: 0; left: 0; right: 0; display: flex; justify-content: space-between;
+    padding: 2.5vh 4vw 0; pointer-events: none; font-weight: 800; text-shadow: 0 2px 4px rgba(0,0,0,.6); font-size: 3vh; }
+  .hud div { background: rgba(0,0,0,.35); border-radius: 14px; padding: .6vh 1.6vw; }
+  .help { position: fixed; bottom: 2vh; left: 0; right: 0; text-align: center; font-size: 2.4vh; pointer-events: none;
+    text-shadow: 0 2px 4px rgba(0,0,0,.7); opacity: .9; }
+  .help b { background: #facc15; color: #222; border-radius: 50%; padding: 0 .55em; margin: 0 .2em; }
+  .overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: rgba(10, 20, 30, .55); text-align: center; padding: 3vh; }
+  .overlay.hidden { display: none; }
+  .overlay h1 { margin: 0; font-size: 8vh; text-shadow: 0 4px 10px rgba(0,0,0,.5); }
+  .overlay h1 span { color: #facc15; }
+  .overlay p { margin: 1.2vh 0; font-size: 3vh; }
+  .overlay .big { font-size: 4.5vh; font-weight: 800; color: #facc15; animation: pulse 1s infinite alternate; }
+  .overlay table { font-size: 2.8vh; margin: 1vh auto; text-align: left; border-spacing: 2vw .6vh; }
+  .overlay td b { background: #facc15; color: #222; border-radius: 50%; padding: 0 .6em; }
+  @keyframes pulse { from { opacity: .6; } to { opacity: 1; } }
+</style>
+</head>
+<body>
+<div class="hud">
+  <div>🪙 <span id="coins">0</span> / <span id="total">0</span></div>
+  <div id="hearts">❤❤❤</div>
+  <div>⏱ <span id="time">0</span>s</div>
+</div>
+<div class="help"><b>A</b> Jump &nbsp; <b>B</b> Punch &nbsp; <b>A</b>+<b>B</b> / <b>B</b>+<b>A</b> Long jump</div>
+<div class="overlay" id="overlay">
+  <h1>Bruno's <span>Big Adventure</span></h1>
+  <p id="msg">Reach the flag. Collect coins. Punch the slimes!</p>
+  <table>
+    <tr><td><b>A</b></td><td>Jump</td></tr>
+    <tr><td><b>B</b></td><td>Punch</td></tr>
+    <tr><td><b>A</b>+<b>B</b> or <b>B</b>+<b>A</b></td><td>Very long jump</td></tr>
+    <tr><td>Stick / D-pad</td><td>Move</td></tr>
+  </table>
+  <p class="big" id="start">Press A to start</p>
+</div>
+<script src="three.min.js"></script>
+<script>
+"use strict";
+// ---------------------------------------------------------------- input
+// Sources: keyboard, browser Gamepad API, and the Android TV app (window.tvKey / window.tvAxis).
+const dirs = { left: 0, right: 0, up: 0, down: 0 };
+const stick = { x: 0, y: 0 };
+let nativeInput = false;       // once the Android app sends input, ignore the Gamepad API (no double presses)
+const padPrev = { a: false, b: false, start: false };
+
+function pressButton(name) {
+  if (state === 'menu' || state === 'over' || state === 'win') { if (name === 'A' || name === 'START') startGame(); return; }
+  if (name === 'A') onA(); else if (name === 'B') onB();
+}
+const KEYMAP = {
+  ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
+  ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down',
+};
+addEventListener('keydown', e => {
+  if (e.repeat) return;
+  if (KEYMAP[e.code]) dirs[KEYMAP[e.code]] = 1;
+  else if (e.code === 'Space' || e.code === 'KeyZ' || e.code === 'Enter') pressButton('A');
+  else if (e.code === 'KeyX' || e.code === 'KeyB' || e.code === 'ShiftLeft') pressButton('B');
+  e.preventDefault();
+});
+addEventListener('keyup', e => { if (KEYMAP[e.code]) dirs[KEYMAP[e.code]] = 0; });
+addEventListener('pointerdown', () => { if (state !== 'play') pressButton('A'); });
+
+// Called by the Android TV app. code: A, B, START, LEFT, RIGHT, UP, DOWN
+window.tvKey = (code, down) => {
+  nativeInput = true;
+  if (code === 'LEFT' || code === 'RIGHT' || code === 'UP' || code === 'DOWN') dirs[code.toLowerCase()] = down ? 1 : 0;
+  else if (down) pressButton(code);
+};
+window.tvAxis = (x, y) => { nativeInput = true; stick.x = x; stick.y = y; };
+
+function pollGamepad() {
+  if (nativeInput || !navigator.getGamepads) return;
+  const gp = Array.from(navigator.getGamepads()).find(g => g && g.connected);
+  if (!gp) return;
+  const dead = v => Math.abs(v) < 0.2 ? 0 : v;
+  stick.x = dead(gp.axes[0] || 0); stick.y = dead(gp.axes[1] || 0);
+  if (gp.buttons[14] && gp.buttons[14].pressed) stick.x = -1;
+  if (gp.buttons[15] && gp.buttons[15].pressed) stick.x = 1;
+  if (gp.buttons[12] && gp.buttons[12].pressed) stick.y = -1;
+  if (gp.buttons[13] && gp.buttons[13].pressed) stick.y = 1;
+  const a = !!(gp.buttons[0] && gp.buttons[0].pressed);   // bottom face button = A
+  const b = !!(gp.buttons[1] && gp.buttons[1].pressed);   // right face button  = B
+  const s = !!(gp.buttons[9] && gp.buttons[9].pressed);
+  if (a && !padPrev.a) pressButton('A');
+  if (b && !padPrev.b) pressButton('B');
+  if (s && !padPrev.start) pressButton('START');
+  padPrev.a = a; padPrev.b = b; padPrev.start = s;
+}
+
+// ---------------------------------------------------------------- audio (tiny synth blips)
+let actx = null;
+function beep(freq, dur, type = 'square', vol = 0.06, slide = 0) {
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = type; o.frequency.value = freq;
+    if (slide) o.frequency.linearRampToValueAtTime(freq + slide, actx.currentTime + dur);
+    g.gain.value = vol; g.gain.linearRampToValueAtTime(0, actx.currentTime + dur);
+    o.connect(g); g.connect(actx.destination); o.start(); o.stop(actx.currentTime + dur);
+  } catch (e) { /* audio is optional */ }
+}
+
+// ---------------------------------------------------------------- scene
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+renderer.shadowMap.enabled = true;
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8ed1fc);
+scene.fog = new THREE.Fog(0x8ed1fc, 40, 110);
+const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 200);
+function resize() {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x6b8e5a, 0.85));
+const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+sun.position.set(10, 25, 10);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+Object.assign(sun.shadow.camera, { left: -16, right: 16, top: 16, bottom: -16, near: 1, far: 60 });
+scene.add(sun, sun.target);
+
+const mat = c => new THREE.MeshLambertMaterial({ color: c });
+function box(w, h, d, color, x = 0, y = 0, z = 0) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(color));
+  m.position.set(x, y, z); m.castShadow = true; return m;
+}
+
+// ---------------------------------------------------------------- level
+// Platforms: [centerX, topY, centerZ, width, depth]. The course runs toward -Z.
+// Gaps of ~3 units need a jump; the two gaps of ~7.5 units need the very long jump.
+const PLATFORMS = [
+  [0, 0, 0, 8, 8],
+  [0, 0, -10, 6, 6],
+  [3, 1.5, -17.5, 5, 5],
+  [-3, 3, -24, 5, 5],
+  [-3, 3, -37, 6, 6],      // long jump gap from the previous one
+  [2, 3, -46, 5, 5],
+  [0, 4, -56, 9, 9],       // slime arena
+  [0, 4, -70, 5, 5],       // long jump gap again
+  [0, 5, -80, 8, 8],       // goal
+];
+const SLIMES_AT = [[1, 0], [3, 0], [5, 0], [6, -2], [6, 2], [6, 0], [8, -2]];
+const platforms = PLATFORMS.map(([x, top, z, w, d]) => {
+  const g = new THREE.Group();
+  const dirt = box(w, 3, d, 0x8b5a2b, x, top - 1.5, z); dirt.receiveShadow = true;
+  const grass = box(w + 0.1, 0.25, d + 0.1, 0x5fbf4a, x, top - 0.125, z); grass.receiveShadow = true;
+  g.add(dirt, grass); scene.add(g);
+  return { x, top, z, hw: w / 2, hd: d / 2 };
+});
+
+// coins
+const coins = [];
+const coinGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.1, 16);
+const coinMat = mat(0xffd21f);
+function addCoin(x, y, z) {
+  const m = new THREE.Mesh(coinGeo, coinMat);
+  m.rotation.z = Math.PI / 2; m.position.set(x, y, z);
+  const pivot = new THREE.Group(); pivot.position.set(x, y, z); m.position.set(0, 0, 0); pivot.add(m);
+  scene.add(pivot); coins.push({ pivot, taken: false });
+}
+platforms.forEach((p, i) => {
+  if (i === 0) return;
+  for (let k = -1; k <= 1; k++) addCoin(p.x + k * Math.min(1.6, p.hw - 0.8), p.top + 1.1, p.z + (k === 0 ? 0 : 0.5));
+});
+// reward coins in the air over the long jumps
+[[-3, 5.4, -30.5], [-3, 5.8, -32], [-3, 5.4, -33.5], [0, 6.4, -63.5], [0, 6.8, -65], [0, 6.4, -66.5]].forEach(c => addCoin(...c));
+document.getElementById('total').textContent = coins.length;
+
+// goal flag
+const flagGroup = new THREE.Group();
+{
+  const p = platforms[platforms.length - 1];
+  flagGroup.position.set(p.x, p.top, p.z - 2);
+  flagGroup.add(box(0.15, 5, 0.15, 0xeeeeee, 0, 2.5, 0), box(1.6, 1, 0.08, 0xe8453c, 0.85, 4.4, 0));
+  scene.add(flagGroup);
+}
+
+// ---------------------------------------------------------------- Bruno, the hero (an original bear)
+const bruno = new THREE.Group();
+const parts = {};
+{
+  const fur = 0xa4642c, tan = 0xe9c79b, dark = 0x2b1a10;
+  const body = box(0.9, 0.9, 0.6, fur, 0, 0.95, 0);
+  const belly = box(0.6, 0.6, 0.05, tan, 0, 0.95, 0.31);
+  const head = new THREE.Group(); head.position.set(0, 1.75, 0);
+  head.add(box(0.85, 0.75, 0.75, fur), box(0.4, 0.3, 0.2, tan, 0, -0.1, 0.42), box(0.14, 0.1, 0.06, dark, 0, -0.02, 0.54),
+    box(0.22, 0.22, 0.22, fur, -0.38, 0.45, 0), box(0.22, 0.22, 0.22, fur, 0.38, 0.45, 0),
+    box(0.1, 0.12, 0.05, dark, -0.2, 0.12, 0.38), box(0.1, 0.12, 0.05, dark, 0.2, 0.12, 0.38),
+    box(0.9, 0.12, 0.8, 0x2f6fd8, 0, 0.42, 0));   // blue headband
+  const mkLimb = (x, y, w, h) => { const g = new THREE.Group(); g.position.set(x, y, 0); g.add(box(w, h, w, fur, 0, -h / 2 + 0.1, 0)); return g; };
+  parts.armL = mkLimb(-0.62, 1.3, 0.28, 0.8); parts.armR = mkLimb(0.62, 1.3, 0.28, 0.8);
+  parts.legL = mkLimb(-0.25, 0.5, 0.34, 0.6); parts.legR = mkLimb(0.25, 0.5, 0.34, 0.6);
+  parts.armR.add(box(0.34, 0.3, 0.34, tan, 0, -0.7, 0));  // glove-ish paw
+  bruno.add(body, belly, head, parts.armL, parts.armR, parts.legL, parts.legR);
+  bruno.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  scene.add(bruno);
+}
+
+// slimes
+const slimes = [];
+SLIMES_AT.forEach(([pi, off]) => {
+  const p = platforms[pi];
+  const mesh = box(0.9, 0.7, 0.9, 0x58d36a, 0, 0, 0);
+  mesh.add(box(0.12, 0.12, 0.05, 0x112211, -0.2, 0.1, 0.46), box(0.12, 0.12, 0.05, 0x112211, 0.2, 0.1, 0.46));
+  scene.add(mesh);
+  const lim = Math.max(0.5, p.hw - 0.8);
+  slimes.push({ mesh, p, z: p.z + off, x: p.x + (Math.random() * 2 - 1) * lim, lim, dir: Math.random() < 0.5 ? -1 : 1, alive: true, dead: 0 });
+});
+
+// ---------------------------------------------------------------- game state
+const GRAVITY = 28, RUN = 6.5, JUMP_V = 10, LONG_V = 10.5, LONG_SPEED = 13.5, COMBO_WINDOW = 0.22, R = 0.4;
+let state = 'menu';
+let clock = 0;
+const P = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, face: Math.PI, ground: true, coyote: 0, longJump: false,
+  punch: 0, punchCool: 0, hurt: 0, lives: 3, coins: 0, check: { x: 0, y: 0, z: 0 } };
+let lastA = -9, lastAJumped = false, lastB = -9, lastBPunched = false, startTime = 0;
+
+function startGame() {
+  Object.assign(P, { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, face: Math.PI, ground: true, longJump: false,
+    punch: 0, punchCool: 0, hurt: 0, lives: 3, coins: 0, check: { x: 0, y: 0, z: 0 } });
+  coins.forEach(c => { c.taken = false; c.pivot.visible = true; });
+  slimes.forEach(s => { s.alive = true; s.dead = 0; s.mesh.visible = true; s.mesh.scale.set(1, 1, 1); });
+  startTime = clock; state = 'play';
+  document.getElementById('overlay').classList.add('hidden');
+  beep(520, 0.12, 'triangle', 0.08, 300);
+  updateHud();
+}
+function endGame(won) {
+  state = won ? 'win' : 'over';
+  const t = Math.round(clock - startTime);
+  document.getElementById('msg').textContent = won
+    ? `You made it! 🪙 ${P.coins}/${coins.length} coins in ${t}s`
+    : 'Out of lives. Try again!';
+  document.getElementById('start').textContent = 'Press A to play again';
+  document.getElementById('overlay').classList.remove('hidden');
+  beep(won ? 880 : 200, 0.4, 'triangle', 0.08, won ? 400 : -100);
+}
+function updateHud() {
+  document.getElementById('coins').textContent = P.coins;
+  document.getElementById('hearts').textContent = '❤'.repeat(Math.max(0, P.lives)) + '🖤'.repeat(Math.max(0, 3 - P.lives));
+}
+
+// ---- the three actions
+function doJump() {
+  P.vy = JUMP_V; P.ground = false; P.coyote = 0;
+  beep(330, 0.15, 'square', 0.05, 260);
+}
+function doLongJump() {
+  // Very long jump: launches Bruno forward about twice as far as a normal jump.
+  P.longJump = true; P.vy = LONG_V; P.ground = false; P.coyote = 0; P.punch = 0;
+  P.vx = Math.sin(P.face) * LONG_SPEED; P.vz = Math.cos(P.face) * LONG_SPEED;
+  beep(260, 0.3, 'sawtooth', 0.05, 500);
+}
+function doPunch() {
+  if (P.punchCool > 0) return false;
+  P.punch = 0.25; P.punchCool = 0.38;
+  beep(160, 0.1, 'sawtooth', 0.06, -60);
+  return true;
+}
+function onA() {
+  const quickB = clock - lastB < COMBO_WINDOW && lastBPunched;   // B then A  -> long jump
+  if (quickB && (P.ground || P.coyote > 0) && !P.longJump) { doLongJump(); lastB = -9; lastA = -9; return; }
+  if (P.ground || P.coyote > 0) { doJump(); lastA = clock; lastAJumped = true; } else { lastAJumped = false; }
+}
+function onB() {
+  const quickA = clock - lastA < COMBO_WINDOW && lastAJumped;    // A then B  -> long jump
+  if (quickA && !P.longJump) { doLongJump(); lastA = -9; lastB = -9; return; }
+  lastBPunched = doPunch(); lastB = clock;
+}
+
+function hurtPlayer(fromX, fromZ) {
+  if (P.hurt > 0) return;
+  P.lives--; P.hurt = 1.5; P.longJump = false;
+  const dx = P.x - fromX, dz = P.z - fromZ, l = Math.hypot(dx, dz) || 1;
+  P.vx = dx / l * 6; P.vz = dz / l * 6; P.vy = 7; P.ground = false;
+  beep(120, 0.3, 'sawtooth', 0.08, -60);
+  updateHud();
+  if (P.lives <= 0) endGame(false);
+}
+function respawn() {
+  P.lives--; updateHud();
+  if (P.lives <= 0) { endGame(false); return; }
+  Object.assign(P, { x: P.check.x, y: P.check.y + 0.2, z: P.check.z, vx: 0, vy: 0, vz: 0, longJump: false, hurt: 1.5 });
+  beep(140, 0.4, 'triangle', 0.08, -80);
+}
+
+// ---------------------------------------------------------------- physics
+function step(dt) {
+  const t = clock;
+  // movement input (stick + D-pad), camera looks toward -Z so "up" = -Z
+  let ix = dirs.right - dirs.left + stick.x, iz = dirs.down - dirs.up + stick.y;
+  const il = Math.hypot(ix, iz); if (il > 1) { ix /= il; iz /= il; }
+  const moving = il > 0.15;
+
+  if (P.longJump) {
+    // committed leap: keep the launch velocity until landing
+  } else {
+    const accel = P.ground ? 60 : 22;
+    const tx = moving ? ix * RUN : 0, tz = moving ? iz * RUN : 0;
+    const dvx = tx - P.vx, dvz = tz - P.vz, dl = Math.hypot(dvx, dvz);
+    if (dl > 0) { const k = Math.min(1, accel * dt / dl); P.vx += dvx * k; P.vz += dvz * k; }
+    if (moving && P.hurt < 1.2) P.face = Math.atan2(ix, iz);
+  }
+
+  const prevY = P.y;
+  P.vy -= GRAVITY * dt;
+  P.x += P.vx * dt; P.y += P.vy * dt; P.z += P.vz * dt;
+
+  const wasGround = P.ground;
+  P.ground = false;
+  if (P.vy <= 0) {
+    for (const p of platforms) {
+      if (Math.abs(P.x - p.x) <= p.hw + R * 0.6 && Math.abs(P.z - p.z) <= p.hd + R * 0.6 &&
+          prevY >= p.top - 0.1 && P.y <= p.top) {
+        P.y = p.top; P.vy = 0; P.ground = true; P.longJump = false; P.check = { x: p.x, y: p.top, z: p.z };
+        break;
+      }
+    }
+  }
+  if (P.ground) P.coyote = 0.1; else if (wasGround) P.coyote = 0.1; else P.coyote = Math.max(0, P.coyote - dt);
+  if (P.ground && !wasGround) beep(90, 0.06, 'triangle', 0.05);
+
+  P.punch = Math.max(0, P.punch - dt); P.punchCool = Math.max(0, P.punchCool - dt); P.hurt = Math.max(0, P.hurt - dt);
+  if (P.y < -14) respawn();
+
+  // coins
+  for (const c of coins) {
+    if (c.taken) continue;
+    c.pivot.rotation.y = t * 3;
+    if (Math.hypot(P.x - c.pivot.position.x, P.z - c.pivot.position.z) < 0.9 && Math.abs(P.y + 0.9 - c.pivot.position.y) < 1.2) {
+      c.taken = true; c.pivot.visible = false; P.coins++; updateHud(); beep(988, 0.12, 'square', 0.05, 500);
+    }
+  }
+
+  // slimes
+  const fx = Math.sin(P.face), fz = Math.cos(P.face);
+  for (const s of slimes) {
+    if (s.dead > 0) { s.dead -= dt; s.mesh.scale.y = Math.max(0.05, s.dead / 0.4); if (s.dead <= 0) s.mesh.visible = false; continue; }
+    if (!s.alive) continue;
+    s.x += s.dir * 1.6 * dt;
+    if (s.x > s.p.x + s.lim) s.dir = -1; else if (s.x < s.p.x - s.lim) s.dir = 1;
+    s.mesh.position.set(s.x, s.p.top + 0.35 + Math.abs(Math.sin(t * 5 + s.z)) * 0.15, s.z);
+    const dx = s.x - P.x, dz = s.z - P.z, dist = Math.hypot(dx, dz), dy = P.y - s.p.top;
+    const squash = () => { s.alive = false; s.dead = 0.4; P.coins += 0; beep(440, 0.15, 'square', 0.06, 200); };
+    if (P.punch > 0 && dist < 1.9 && Math.abs(dy) < 1.4 && (dx * fx + dz * fz) > -0.3) { squash(); continue; }
+    if (dist < 0.9 && Math.abs(dy) < 1.0) {
+      if (P.vy < -1 && dy > 0.45) { squash(); P.vy = 8; P.longJump = false; }   // stomp
+      else hurtPlayer(s.x, s.z);
+    }
+  }
+
+  // goal
+  const gp = flagGroup.position;
+  if (Math.hypot(P.x - gp.x, P.z - gp.z) < 1.6 && Math.abs(P.y - gp.y) < 2.5) endGame(true);
+
+  // pose Bruno
+  bruno.position.set(P.x, P.y, P.z);
+  bruno.rotation.y = P.face;
+  bruno.visible = !(P.hurt > 0 && Math.floor(t * 14) % 2 === 0);
+  const speed = Math.hypot(P.vx, P.vz), swing = Math.sin(t * 14) * Math.min(1, speed / RUN);
+  parts.legL.rotation.x = P.ground ? swing * 0.9 : -0.4; parts.legR.rotation.x = P.ground ? -swing * 0.9 : 0.4;
+  parts.armL.rotation.x = P.longJump ? -2.8 : (P.ground ? -swing * 0.7 : -2.4);
+  parts.armR.rotation.x = P.punch > 0 ? -1.57 - Math.sin((1 - P.punch / 0.25) * Math.PI) * 0.4 : (P.longJump ? -2.8 : (P.ground ? swing * 0.7 : -2.4));
+  bruno.rotation.x = P.longJump ? 0.9 : 0;   // dive pose
+
+  // camera follows from behind and above
+  const camTarget = new THREE.Vector3(P.x * 0.8, P.y + 5.5, P.z + 9);
+  camera.position.lerp(camTarget, 1 - Math.pow(0.001, dt));
+  camera.lookAt(P.x, P.y + 1.2, P.z - 3);
+  sun.position.set(P.x + 10, P.y + 25, P.z + 10); sun.target.position.set(P.x, P.y, P.z);
+  document.getElementById('time').textContent = Math.round(t - startTime);
+}
+
+// ---------------------------------------------------------------- main loop
+camera.position.set(0, 6, 10);
+let last = performance.now();
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.05, (now - last) / 1000); last = now; clock += dt;
+  pollGamepad();
+  if (state === 'play') step(dt);
+  else { camera.position.set(Math.sin(clock * 0.2) * 12, 7, 12); camera.lookAt(0, 2, -6); bruno.position.set(0, 0, 0); bruno.rotation.y = clock; }
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

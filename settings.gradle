@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "DhruvilGames"
-include ':app', ':racer'
+include ':app', ':racer', ':bear'

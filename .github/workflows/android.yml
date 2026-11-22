@@ -33,3 +33,9 @@ jobs:
         with:
           name: DhruvilRacer-apk
           path: racer/build/outputs/apk/debug/racer-debug.apk
+
+      - name: Upload Bruno's Big Adventure (Android TV) APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BrunoBigAdventure-TV-apk
+          path: bear/build/outputs/apk/debug/bear-debug.apk

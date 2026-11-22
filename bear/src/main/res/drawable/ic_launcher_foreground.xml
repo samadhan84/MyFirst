@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- ears -->
+    <path android:fillColor="#A4642C" android:pathData="M30,28 h16 v16 h-16 Z M62,28 h16 v16 h-16 Z" />
+    <!-- head -->
+    <path android:fillColor="#A4642C" android:pathData="M28,38 h52 v42 h-52 Z" />
+    <!-- headband -->
+    <path android:fillColor="#2F6FD8" android:pathData="M26,40 h56 v8 h-56 Z" />
+    <!-- snout, nose, eyes -->
+    <path android:fillColor="#E9C79B" android:pathData="M42,60 h24 v16 h-24 Z" />
+    <path android:fillColor="#2B1A10" android:pathData="M50,62 h8 v5 h-8 Z M38,54 h6 v7 h-6 Z M64,54 h6 v7 h-6 Z" />
+</vector>
