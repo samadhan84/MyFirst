@@ -32,11 +32,23 @@ floating islands, punch slimes, collect coins and reach the flag.
 On a plain TV remote, OK acts as A (there is no B, so use a gamepad to punch). On a computer:
 arrows/WASD to move, Space or Z = A, X = B.
 
+### Multiplayer
+
+Bruno has its own multiplayer server (`server/`): everyone connected sees each other's bears live, with names.
+
+    cd server && npm install && npm start      # listens on port 8080
+    # browser: open http://<this-computer>:8080/
+
+For the Android TV app, put your server's address in `bear/src/main/res/values/strings.xml`
+(`server_url`, e.g. `ws://192.168.1.20:8080`) and rebuild. Left empty, the app plays solo.
+The server is plain `ws://` with no accounts, so run it on your home network, not as a public service.
+
 This is a standalone game with its own characters and levels. It is **not** connected to the
 Super Bear Adventure servers (that game and its network protocol belong to its developer).
 
 ## Project layout
 
+- `server/`: the multiplayer server (Node.js)
 - `web/bear/`, `bear/`: Bruno's Big Adventure and its Android TV app (`com.dhruvil.bear`)
 
 - `web/tic/`, `web/racer/`: the games (HTML/CSS/JS)

@@ -1,0 +1,9 @@
+{
+  "name": "bruno-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Multiplayer server for Bruno's Big Adventure",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "ws": "8.18.0" }
+}

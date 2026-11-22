@@ -40,7 +40,9 @@ public class MainActivity extends Activity {
 
         setContentView(webView);
         keepScreenOn();
-        webView.loadUrl("file:///android_asset/index.html");
+        String server = getString(R.string.server_url).trim();
+        String query = server.isEmpty() ? "" : "?server=" + android.net.Uri.encode(server);
+        webView.loadUrl("file:///android_asset/index.html" + query);
     }
 
     private void keepScreenOn() {
